@@ -72,9 +72,12 @@ impl HostError {
                0 => "Host internal error: an unexpected Soroban runtime error occurred — this may be a platform bug, not a contract bug.".to_string(),
                 _ => format!("Context error (code {code}): the contract was invoked in an invalid execution context."),
             },
-            Self::Value { code } => match code {
-                0 => "Invalid value: a host function received an argument of the wrong type or format.".to_string(),
-                _ => format!("Value error (code {code}): a host value could not be converted or validated."),
+            Self::Value { code } => {
+                if let Some(detail) = crate::decode::mappings::value::lookup(*code) {
+                    detail.summary.to_string()
+                } else {
+                    format!("Value error (code {code}): a host value could not be converted or validated.")
+                }
             },
             Self::Object { code } => match code {
                 0 => "Index out of bounds: the contract accessed a vector or byte array with an index beyond its length.".to_string(),
