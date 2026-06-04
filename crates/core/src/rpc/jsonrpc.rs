@@ -5,7 +5,21 @@
 
 use crate::error::{PrismError, PrismResult, JsonRpcError};
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// Base delay (ms) for exponential backoff: delay = `BASE_DELAY_MS × 2^attempt`.
+const BASE_DELAY_MS: u64 = 100;
+
+/// Hard ceiling on any single backoff sleep to avoid excessively long waits.
+const MAX_DELAY_MS: u64 = 10_000; // 10 seconds
+
+/// Compute the capped exponential backoff duration for a given attempt number.
+///
+/// Returns `BASE_DELAY_MS × 2^attempt`, clamped to [`MAX_DELAY_MS`].
+fn backoff_duration(attempt: u32) -> Duration {
+    let ms = BASE_DELAY_MS.saturating_mul(1u64.saturating_shl(attempt));
+    Duration::from_millis(ms.min(MAX_DELAY_MS))
+}
 
 
 /// JSON-RPC 2.0 request envelope.
@@ -99,7 +113,12 @@ impl JsonRpcTransport {
 
     /// Execute a typed JSON-RPC call and return the typed result.
     ///
-    /// Retries on network errors and HTTP 429 with exponential backoff.
+    /// Retries are triggered by:
+    /// - Transport-level failures (connection refused, timeout, etc.)
+    /// - HTTP 429 Too Many Requests
+    /// - HTTP 5xx Server Errors (500–599)
+    ///
+    /// Backoff follows `BASE_DELAY_MS × 2^attempt`, capped at `MAX_DELAY_MS`.
     pub async fn call<P, R>(&self, request: &JsonRpcRequest<P>) -> PrismResult<R>
     where
         P: Serialize + std::fmt::Debug,
@@ -110,8 +129,9 @@ impl JsonRpcTransport {
 
         for attempt in 0..=self.max_retries {
             if attempt > 0 {
-                let backoff = std::time::Duration::from_millis(100 * 2u64.pow(attempt));
-                tokio::time::sleep(backoff).await;
+                let delay = backoff_duration(attempt);
+                tracing::debug!(attempt, method, delay_ms = delay.as_millis(), "backing off before retry");
+                tokio::time::sleep(delay).await;
                 tracing::debug!(attempt, method, "retrying RPC request");
             }
 
@@ -121,9 +141,6 @@ impl JsonRpcTransport {
             match self.client.post(&self.endpoint).json(request).send().await {
                 Ok(response) => {
                     let status = response.status();
-                    let body = response.text().await.map_err(|e| {
-                        PrismError::RpcError(format!("response read error: {e}"))
-                    })?;
                     let elapsed_ms = started_at.elapsed().as_millis();
 
                     tracing::debug!(
@@ -134,13 +151,34 @@ impl JsonRpcTransport {
                         elapsed_ms,
                         "RPC response received"
                     );
-                    tracing::trace!(method, elapsed_ms, response = %body, "RPC response payload");
 
-                    if status == 429 {
-                        tracing::warn!("rate limited by RPC endpoint, backing off");
-                        last_error = Some(PrismError::RpcError("rate limited".to_string()));
+                    // Retry on 429 Too Many Requests.
+                    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                        tracing::warn!(method, attempt, "rate limited by RPC endpoint, will retry");
+                        last_error = Some(PrismError::RpcError(format!("rate limited (attempt {attempt})")));
                         continue;
                     }
+
+                    // Retry on any 5xx Server Error.
+                    if status.is_server_error() {
+                        tracing::warn!(
+                            method,
+                            attempt,
+                            status = %status,
+                            elapsed_ms,
+                            "RPC endpoint returned server error (5xx), will retry"
+                        );
+                        last_error = Some(PrismError::RpcError(format!(
+                            "server error {status} on attempt {attempt}"
+                        )));
+                        continue;
+                    }
+
+                    let body = response.text().await.map_err(|e| {
+                        PrismError::RpcError(format!("response read error: {e}"))
+                    })?;
+
+                    tracing::trace!(method, elapsed_ms, response = %body, "RPC response payload");
 
                     let envelope: JsonRpcResponse<R> =
                         serde_json::from_str(&body).map_err(|e| {
