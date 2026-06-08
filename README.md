@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Documentation-Live-blue?style=for-the-badge&logo=gitbook&logoColor=white" alt="Docs" />
 </p>
 
-**Prism** is a diagnostic tool for Soroban that translates complex blockchain errors into clear, actionable insights. By resolving custom contract errors and providing interactive time-travel replays of historical transactions, Prism helps developers identify and fix root causes in seconds.
+**Prism** is a developer tool that makes Soroban smart contract errors easy to understand. It takes raw, cryptic error codes from failed transactions and turns them into plain English explanations with suggested fixes. It also lets developers replay past transactions step by step to see exactly what went wrong and why, so they can find and fix the problem in seconds instead of guessing.
 
 ## Features
 
