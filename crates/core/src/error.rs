@@ -12,11 +12,6 @@ pub struct JsonRpcError {
     pub message: String,
 }
 
-impl std::fmt::Display for JsonRpcError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "JSON-RPC error (code: {}): {}", self.code, self.message)
-    }
-}
 
 /// Specific failure kinds for history archive operations.
 #[derive(Debug, Error)]

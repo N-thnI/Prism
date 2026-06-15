@@ -2,7 +2,7 @@
 
 use crate::types::report::Severity;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextErrorDetail {
     pub code: u32,
     pub name: &'static str,

@@ -13,7 +13,7 @@ const MAX_DELAY_MS: u64 = 10_000;
 
 fn backoff_duration(attempt: u32) -> Duration {
 
-    let ms = BASE_DELAY_MS.saturating_mul(1u64.saturating_shl(attempt));
+    let ms = BASE_DELAY_MS.saturating_mul(2u64.saturating_pow(attempt));
     Duration::from_millis(ms.min(MAX_DELAY_MS))
 }
 
