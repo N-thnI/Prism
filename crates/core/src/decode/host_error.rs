@@ -5,9 +5,14 @@
 //! `Unknown` variant for forward compatibility.
 
 use serde::Serialize;
+use stellar_xdr::curr::{
+    InvokeHostFunctionResult, OperationResult, OperationResultTr, TransactionResult,
+    TransactionResultResult,
+};
 
 use crate::error::{PrismError, PrismResult};
 use crate::taxonomy::schema::ErrorCategory;
+use crate::xdr::codec::XdrCodec;
 
 /// Every Soroban host error category, plus contract-specific and unknown variants.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -63,17 +68,26 @@ impl HostError {
                     format!("Budget error (code {code}): the transaction exceeded an allocated resource budget.")
                 }
             },
-            Self::Storage { code } => match code {
-                0 => "Storage access denied: the contract tried to read or write a ledger entry not declared in the transaction footprint.".to_string(),
-                _ => format!("Storage error (code {code}): an unexpected error occurred while accessing contract data."),
+            Self::Storage { code } => {
+                if let Some(detail) = crate::decode::mappings::storage::lookup(*code) {
+                    detail.summary.to_string()
+                } else {
+                    format!("Storage error (code {code}): an unexpected error occurred while accessing contract data.")
+                }
             },
-            Self::Auth { code } => match code {
-                0 => "Authorization failed: the transaction is missing or has invalid auth entries for this contract call.".to_string(),
-                _ => format!("Auth error (code {code}): an authorization requirement was not satisfied."),
+            Self::Auth { code } => {
+                if let Some(detail) = crate::decode::mappings::auth::lookup(*code) {
+                    detail.summary.to_string()
+                } else {
+                    format!("Auth error (code {code}): an authorization requirement was not satisfied.")
+                }
             },
-            Self::Context { code } => match code {
-               0 => "Host internal error: an unexpected Soroban runtime error occurred — this may be a platform bug, not a contract bug.".to_string(),
-                _ => format!("Context error (code {code}): the contract was invoked in an invalid execution context."),
+            Self::Context { code } => {
+                if let Some(detail) = crate::decode::mappings::context::lookup(*code) {
+                    detail.summary.to_string()
+                } else {
+                    format!("Context error (code {code}): the contract was invoked in an invalid execution context.")
+                }
             },
             Self::Value { code } => {
                 if let Some(detail) = crate::decode::mappings::value::lookup(*code) {
@@ -205,6 +219,14 @@ pub fn classify_error(tx_data: &serde_json::Value) -> PrismResult<ClassifiedErro
         return Err(PrismError::TransactionSucceeded);
     }
 
+    if let Some(result_xdr_b64) = tx_data.get("resultXdr").and_then(|r| r.as_str()) {
+        if let Ok(tx_result) = TransactionResult::from_xdr_base64(result_xdr_b64) {
+            let mut classified = from_transaction_result(tx_result)?;
+            classified.raw_data = tx_data.clone();
+            return Ok(classified);
+        }
+    }
+
     Ok(ClassifiedError {
         category: ErrorCategory::Contract,
         error_code: 0,
@@ -311,11 +333,11 @@ mod tests {
         );
         assert_eq!(
             HostError::Storage { code: 0 }.summary(),
-            "Storage access denied: the contract tried to read or write a ledger entry not declared in the transaction footprint."
+            "The contract attempted to access a ledger entry not included in the transaction's footprint."
         );
         assert_eq!(
             HostError::Auth { code: 0 }.summary(),
-            "Authorization failed: the transaction is missing or has invalid auth entries for this contract call."
+            "The authorization context is malformed or does not match the current invocation."
         );
         assert_eq!(
             HostError::Context { code: 0 }.summary(),
