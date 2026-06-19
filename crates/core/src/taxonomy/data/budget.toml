@@ -54,3 +54,29 @@ requires_upgrade = true
 related_errors = ["host.budget.limit_exceeded.memory"]
 source_file = "soroban-env-host/src/budget.rs"
 documentation_url = "https://soroban.stellar.org/docs/fundamentals/fees-and-metering"
+
+[[errors]]
+id = "host.budget.approaching_limit"
+category = "budget"
+code = 3
+name = "ApproachingLimit"
+severity = "Info"
+since_protocol = 20
+summary = "The transaction is approaching its resource budget limit."
+detailed_explanation = """
+This is a diagnostic signal, not a failure. The execution consumed a high fraction of the \
+allocated budget but did not exceed it. Use this to identify contracts that are close to the \
+limit and may fail under slightly heavier load.
+"""
+
+[[errors.common_causes]]
+description = "Contract logic that scales with input size, approaching the declared limit"
+likelihood = "medium"
+
+[[errors.suggested_fixes]]
+description = "Profile the contract and reduce unnecessary computation before it becomes a hard failure"
+difficulty = "medium"
+requires_upgrade = true
+
+related_errors = ["host.budget.limit_exceeded.cpu"]
+source_file = "soroban-env-host/src/budget.rs"

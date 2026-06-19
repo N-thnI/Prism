@@ -1,6 +1,6 @@
 /// Tests that verify each HostError variant maps to the correct `Severity` level.
 ///
-/// Coverage: Fatal, Error, and Warning are each exercised at least once.
+/// Coverage: Fatal, Error, Warning, and Info are each exercised at least once.
 #[cfg(test)]
 mod tests {
     use crate::decode::mappings::{budget, context, value};
@@ -30,7 +30,6 @@ mod tests {
 
     #[test]
     fn error_severity_warning_maps_to_warning() {
-        // The ErrorSeverity → Severity conversion must preserve the Warning level.
         use crate::decode::mappings::budget::ErrorSeverity;
         let severity: Severity = ErrorSeverity::Warning.into();
         assert_eq!(severity, Severity::Warning);
@@ -79,6 +78,27 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // Warning severity — mapping table and build_report
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn storage_near_expiry_maps_to_warning() {
+        use crate::decode::mappings::storage;
+        // Storage code 4 (NearExpiry) is the canonical Warning entry.
+        let detail = storage::lookup(4).expect("storage code 4 exists");
+        assert_eq!(detail.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn taxonomy_warning_severity_is_correctly_parsed() {
+        let db = TaxonomyDatabase::load_embedded().expect("taxonomy loads");
+        let entry = db
+            .lookup(&ErrorCategory::Storage, 4)
+            .expect("storage code 4 in taxonomy");
+        assert_eq!(entry.severity, "Warning");
+    }
+
+    // ------------------------------------------------------------------
     // Taxonomy-driven build_report severity checks
     // ------------------------------------------------------------------
 
@@ -115,6 +135,38 @@ mod tests {
     }
 
     #[test]
+    fn build_report_storage_near_expiry_is_warning() {
+        use crate::decode::host_error::ClassifiedError;
+        use crate::decode::report::build_report;
+
+        let classified = ClassifiedError {
+            category: ErrorCategory::Storage,
+            error_code: 4,
+            is_contract_error: false,
+            contract_id: None,
+            raw_data: serde_json::Value::Null,
+        };
+        let report = build_report(&classified).expect("report should build");
+        assert_eq!(report.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn build_report_budget_approaching_limit_is_info() {
+        use crate::decode::host_error::ClassifiedError;
+        use crate::decode::report::build_report;
+
+        let classified = ClassifiedError {
+            category: ErrorCategory::Budget,
+            error_code: 3,
+            is_contract_error: false,
+            contract_id: None,
+            raw_data: serde_json::Value::Null,
+        };
+        let report = build_report(&classified).expect("report should build");
+        assert_eq!(report.severity, Severity::Info);
+    }
+
+    #[test]
     fn build_report_unknown_code_defaults_to_error() {
         use crate::decode::host_error::ClassifiedError;
         use crate::decode::report::build_report;
@@ -131,7 +183,29 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Exhaustive: every mapping-table entry has an expected severity
+    // Taxonomy severity parsing
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn taxonomy_fatal_severity_is_correctly_parsed() {
+        let db = TaxonomyDatabase::load_embedded().expect("taxonomy loads");
+        let entry = db
+            .lookup(&ErrorCategory::Context, 7)
+            .expect("context code 7 in taxonomy");
+        assert_eq!(entry.severity, "Fatal");
+    }
+
+    #[test]
+    fn taxonomy_error_severity_is_correctly_parsed() {
+        let db = TaxonomyDatabase::load_embedded().expect("taxonomy loads");
+        let entry = db
+            .lookup(&ErrorCategory::Auth, 1)
+            .expect("auth code 1 in taxonomy");
+        assert_eq!(entry.severity, "Error");
+    }
+
+    // ------------------------------------------------------------------
+    // Exhaustive: every mapping-table entry has a valid severity
     // ------------------------------------------------------------------
 
     #[test]
@@ -165,67 +239,6 @@ mod tests {
     }
 
     #[test]
-    fn taxonomy_fatal_severity_is_correctly_parsed() {
-        let db = TaxonomyDatabase::load_embedded().expect("taxonomy loads");
-        // Context code 7 is the only Fatal entry in the embedded taxonomy.
-        let entry = db
-            .lookup(&ErrorCategory::Context, 7)
-            .expect("context code 7 in taxonomy");
-        assert_eq!(entry.severity, "Fatal");
-    }
-
-    #[test]
-    fn taxonomy_error_severity_is_correctly_parsed() {
-        let db = TaxonomyDatabase::load_embedded().expect("taxonomy loads");
-        let entry = db
-            .lookup(&ErrorCategory::Auth, 1)
-            .expect("auth code 1 in taxonomy");
-        assert_eq!(entry.severity, "Error");
-    }
-
-    // ------------------------------------------------------------------
-    // Warning severity — mapping table and build_report
-    // ------------------------------------------------------------------
-
-    #[test]
-    fn storage_near_expiry_maps_to_warning() {
-        use crate::decode::mappings::storage;
-        // Storage code 4 (NearExpiry) is the canonical Warning entry.
-        let detail = storage::lookup(4).expect("storage code 4 exists");
-        assert_eq!(detail.severity, Severity::Warning);
-    }
-
-    #[test]
-    fn build_report_storage_near_expiry_is_warning() {
-        use crate::decode::host_error::ClassifiedError;
-        use crate::decode::report::build_report;
-
-        let classified = ClassifiedError {
-            category: ErrorCategory::Storage,
-            error_code: 4,
-            is_contract_error: false,
-            contract_id: None,
-            raw_data: serde_json::Value::Null,
-        };
-        let report = build_report(&classified).expect("report should build");
-        assert_eq!(report.severity, Severity::Warning);
-    }
-
-    #[test]
-    fn taxonomy_warning_severity_is_correctly_parsed() {
-        let db = TaxonomyDatabase::load_embedded().expect("taxonomy loads");
-        // Storage code 4 (NearExpiry) is the canonical Warning entry in the taxonomy.
-        let entry = db
-            .lookup(&ErrorCategory::Storage, 4)
-            .expect("storage code 4 in taxonomy");
-        assert_eq!(entry.severity, "Warning");
-    }
-
-    // ------------------------------------------------------------------
-    // Exhaustive: every storage mapping-table entry has a valid severity
-    // ------------------------------------------------------------------
-
-    #[test]
     fn all_storage_entries_have_valid_severity() {
         use crate::decode::mappings::storage::STORAGE_ERROR_DETAILS;
 
@@ -233,6 +246,34 @@ mod tests {
             assert!(
                 matches!(entry.severity, Severity::Fatal | Severity::Error | Severity::Warning | Severity::Info),
                 "Unexpected severity for storage code {}: {:?}",
+                entry.code,
+                entry.severity
+            );
+        }
+    }
+
+    #[test]
+    fn all_context_entries_have_valid_severity() {
+        use crate::decode::mappings::context::CONTEXT_ERROR_DETAILS;
+
+        for entry in CONTEXT_ERROR_DETAILS {
+            assert!(
+                matches!(entry.severity, Severity::Fatal | Severity::Error | Severity::Warning | Severity::Info),
+                "Unexpected severity for context code {}: {:?}",
+                entry.code,
+                entry.severity
+            );
+        }
+    }
+
+    #[test]
+    fn all_auth_entries_have_valid_severity() {
+        use crate::decode::mappings::auth::AUTH_ERROR_DETAILS;
+
+        for entry in AUTH_ERROR_DETAILS {
+            assert!(
+                matches!(entry.severity, Severity::Fatal | Severity::Error | Severity::Warning | Severity::Info),
+                "Unexpected severity for auth code {}: {:?}",
                 entry.code,
                 entry.severity
             );
